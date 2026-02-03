@@ -3,6 +3,8 @@ package tests;
 import tests.config.YouTrackConfig;
 import tests.dto.IssueRequest;
 import io.restassured.http.ContentType;
+import io.restassured.response.Response;
+
 import org.testng.Assert;
 import org.testng.annotations.*;
 import tests.utils.CSVReaderUtil;
@@ -148,53 +150,59 @@ public class YouTrackBasicTests extends YouTrackConfig {
         System.out.println("✓ Создание задачи без summary отклонено с кодом 400");
     }
     
-    // ==================== DDT ТЕСТ ====================
+// ==================== DDT ТЕСТ ====================
     
-    @Test(priority = 5, 
-          dataProvider = "issueTestData", 
-          dataProviderClass = CSVReaderUtil.class,
-          description = "DDT тест: Создание задач с различными данными из CSV")
-    public void testCreateIssueWithDifferentData(String projectId, String summary, 
-                                                 String description, boolean expectedSuccess) {
-        System.out.println(String.format(
-            "DDT тест: Project='%s', Summary='%s', ExpectedSuccess=%b", 
-            projectId, summary, expectedSuccess
-        ));
+@Test(priority = 5, 
+      dataProvider = "issueTestData", 
+      dataProviderClass = CSVReaderUtil.class,
+      description = "DDT тест: Создание задач с различными данными из CSV")
+public void testCreateIssueWithDifferentData(String projectId, String summary, 
+                                             String description, boolean expectedSuccess) {
+    System.out.println(String.format(
+        "DDT тест: Project='%s', Summary='%s', ExpectedSuccess=%b", 
+        projectId, summary, expectedSuccess
+    ));
+    
+    IssueRequest issueRequest = new IssueRequest(projectId, summary, description);
+    
+    // Отправляем запрос
+    Response rawResponse = given()
+        .header("Authorization", "Bearer " + AUTH_TOKEN)
+        .contentType(ContentType.JSON)
+        .body(issueRequest)
+        .when()
+        .post("/api/issues");
+    
+    int statusCode = rawResponse.getStatusCode();
+    
+    if (expectedSuccess) {
+        // Ожидаем успех
+        Assert.assertEquals(statusCode, 200, 
+            "Ожидался код 200 для валидных данных, получен: " + statusCode);
         
-        IssueRequest issueRequest = new IssueRequest(projectId, summary, description);
+        // Проверяем тело ответа
+        rawResponse.then()
+            .body("idReadable", containsString(projectId + "-"))
+            .body("summary", equalTo(summary));
         
-        var response = given()
+        // Извлекаем ID задачи
+        String issueId = rawResponse.jsonPath().getString("id");
+        System.out.println("✓ Задача успешно создана: " + issueId);
+        
+        // Очищаем созданную задачу
+        given()
             .header("Authorization", "Bearer " + AUTH_TOKEN)
-            .contentType(ContentType.JSON)
-            .body(issueRequest)
             .when()
-            .post("/api/issues");
+            .delete("/api/issues/" + issueId)
+            .then()
+            .statusCode(200);
         
-        if (expectedSuccess) {
-            // Ожидаем успех - задача должна создаться
-            response.then()
-                .statusCode(200)
-                .body("idReadable", containsString(projectId + "-"))
-                .body("summary", equalTo(summary));
-            
-            String issueId = response.extract().path("id");
-            System.out.println("✓ Задача успешно создана: " + issueId);
-            
-            // Очищаем созданную задачу
-            given()
-                .header("Authorization", "Bearer " + AUTH_TOKEN)
-                .when()
-                .delete("/api/issues/" + issueId)
-                .then()
-                .statusCode(200);
-            
-        } else {
-            // Ожидаем ошибку - задача не должна создаться
-            int statusCode = response.extract().statusCode();
-            Assert.assertTrue(statusCode >= 400 && statusCode < 500, 
-                "Для некорректных данных ожидается ошибка 4xx");
-            
-            System.out.println("✓ Создание задачи отклонено как и ожидалось (код " + statusCode + ")");
-        }
+    } else {
+        // Ожидаем ошибку
+        Assert.assertTrue(statusCode >= 400 && statusCode < 500, 
+            "Для некорректных данных ожидается ошибка 4xx, получен код: " + statusCode);
+        
+        System.out.println("✓ Создание задачи отклонено как и ожидалось (код " + statusCode + ")");
     }
+}
 }
